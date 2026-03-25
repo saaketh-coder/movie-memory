@@ -1,0 +1,90 @@
+// Prisma schema for Movie Memory
+// Designed for NextAuth.js v5 + Google OAuth + Variant A (backend caching)
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── NextAuth.js models ────────────────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─── Application models ────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // Onboarding: user's favorite movie (null until onboarding is complete)
+  favoriteMovie String?   @db.VarChar(200)
+  onboardedAt   DateTime? // null = not yet onboarded
+
+  accounts Account[]
+  sessions Session[]
+  facts    Fact[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Fact {
+  id        String   @id @default(cuid())
+  userId    String
+  movie     String   @db.VarChar(200)
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Index for the 60-second cache lookup: most recent fact per user + movie
+  @@index([userId, movie, createdAt(sort: Desc)])
+  // Prevent duplicate facts in the same 60-second window (burst protection)
+  // We use a computed "window key" in application code instead, but this
+  // index helps queries stay fast.
+  @@index([userId, createdAt])
+}
